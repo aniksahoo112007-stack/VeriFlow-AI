@@ -1,0 +1,10 @@
+import { Router } from "express";
+import { asyncHandler } from "../utils/async-handler.js";
+import { requireAuth, requireRole } from "../middleware/auth.middleware.js";
+import * as controller from "../controllers/admin.controller.js";
+const router = Router();
+router.use(requireAuth, requireRole("admin"));
+router.get("/users", asyncHandler(controller.users));
+router.patch("/users/:id/role", asyncHandler(controller.updateRole));
+router.get("/audit", asyncHandler(controller.audit));
+export default router;
