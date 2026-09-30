@@ -4,13 +4,47 @@ const nullableText = z.union([z.string().trim().max(300), z.null()]).optional();
 const nullableLongText = z
   .union([z.string().trim().max(1000), z.null()])
   .optional();
-const nullableMoney = z
-  .union([z.coerce.number().finite(), z.null()])
-  .optional();
+const nullableMoney = z.preprocess(
+  (value) =>
+    value === null || value === undefined || value === "" ? null : value,
+  z.union([z.number().finite(), z.null()]),
+).optional();
 const nullableDate = z
   .union([z.iso.date(), z.literal(""), z.null()])
   .optional()
   .transform((v) => v || null);
+
+const unavailableText = /^(?:n\/?a|-|unknown|not available)$/i;
+const safelyNormalizableTextFields = [
+  "vendorName",
+  "vendorAddress",
+  "vendorPhone",
+  "vendorEmail",
+  "currency",
+  "bankName",
+  "paymentMethod",
+  "summary",
+];
+
+export function normalizeAccountLast4(value) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (!text || unavailableText.test(text)) return null;
+  const matches = [...text.matchAll(/(?<!\d)\d{4}(?!\d)/g)];
+  return matches.length ? matches.at(-1)[0] : null;
+}
+
+export function normalizeExtractionInput(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const normalized = { ...value };
+  normalized.accountLast4 = normalizeAccountLast4(value.accountLast4);
+  for (const field of safelyNormalizableTextFields) {
+    if (typeof normalized[field] !== "string") continue;
+    const text = normalized[field].trim();
+    normalized[field] = !text || unavailableText.test(text) ? null : text;
+  }
+  return normalized;
+}
 
 export const extractionSchema = z.object({
   documentType: z

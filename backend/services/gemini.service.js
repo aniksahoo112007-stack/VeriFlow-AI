@@ -4,6 +4,7 @@ import { ApiError } from "../utils/api-error.js";
 import {
   anomalyAnalysisSchema,
   extractionSchema,
+  normalizeExtractionInput,
 } from "../validators/document.validators.js";
 import {
   logProcessingError,
@@ -408,8 +409,8 @@ export async function extractDocument(buffer, mimeType, context = {}) {
     logProcessingError("structured_response_parsing", staged, responseContext);
     const wrapped = new ApiError(
       502,
-      `AI processing failed for model ${modelUsed}. Check the model and API configuration.`,
-      "AI_PROCESSING_FAILED",
+      "The AI response could not be parsed. Please retry the analysis.",
+      "AI_RESPONSE_VALIDATION_FAILED",
       safeErrorDetails(staged),
     );
     wrapped.stage = "structured_response_parsing";
@@ -420,7 +421,7 @@ export async function extractDocument(buffer, mimeType, context = {}) {
   logProcessingStage("zod_validation", "started", responseContext);
   let extraction;
   try {
-    extraction = extractionSchema.parse(parsed);
+    extraction = extractionSchema.parse(normalizeExtractionInput(parsed));
     logProcessingStage("zod_validation", "completed", {
       ...responseContext,
       documentType: extraction.documentType,
@@ -434,7 +435,7 @@ export async function extractDocument(buffer, mimeType, context = {}) {
     logProcessingError("zod_validation", staged, responseContext);
     const wrapped = new ApiError(
       502,
-      `AI processing failed for model ${modelUsed}. Check the model and API configuration.`,
+      "The AI response could not be validated. Please retry the analysis.",
       "AI_RESPONSE_VALIDATION_FAILED",
       safeErrorDetails(staged),
     );

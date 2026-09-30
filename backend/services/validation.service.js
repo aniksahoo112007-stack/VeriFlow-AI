@@ -47,10 +47,21 @@ export async function validateDocument(document, supabase) {
   if (invalidMoney.length) results.push(finding("INVALID_MONEY", "critical", "Suspicious monetary value", "One or more monetary values are negative or unreasonably large.", { metadata: { fields: invalidMoney } }));
 
   if (document.subtotal != null && document.total_amount != null) {
-    const tax = document.tax_amount != null ? Number(document.tax_amount) : document.gst_amount != null ? Number(document.gst_amount) : Number(document.cgst || 0) + Number(document.sgst || 0) + Number(document.igst || 0);
-    const calculated = Number(document.subtotal) + tax - Number(document.discount || 0);
-    const delta = Math.abs(calculated - Number(document.total_amount));
-    results.push(delta > tolerance(document.total_amount) ? finding("TOTAL_MISMATCH", "critical", "Tax and total mismatch", "Subtotal plus taxes minus discount does not match the total.", { expected_value: calculated.toFixed(2), actual_value: Number(document.total_amount).toFixed(2), metadata: { difference: delta } }) : passed("TOTAL_MATCH", "Total calculation consistent", "Subtotal, taxes, discount, and total are consistent."));
+    const gstComponents = [document.cgst, document.sgst, document.igst];
+    const hasGstComponent = gstComponents.some((value) => value != null);
+    const tax = document.tax_amount != null
+      ? Number(document.tax_amount)
+      : document.gst_amount != null
+        ? Number(document.gst_amount)
+        : hasGstComponent
+          ? gstComponents.reduce((sum, value) => sum + (value == null ? 0 : Number(value)), 0)
+          : null;
+    if (tax != null) {
+      const discount = document.discount != null ? Number(document.discount) : 0;
+      const calculated = Number(document.subtotal) + tax - discount;
+      const delta = Math.abs(calculated - Number(document.total_amount));
+      results.push(delta > tolerance(document.total_amount) ? finding("TOTAL_MISMATCH", "critical", "Tax and total mismatch", "Subtotal plus taxes minus discount does not match the total.", { expected_value: calculated.toFixed(2), actual_value: Number(document.total_amount).toFixed(2), metadata: { difference: delta } }) : passed("TOTAL_MATCH", "Total calculation consistent", "Subtotal, taxes, discount, and total are consistent."));
+    }
   }
   if (document.paid_amount != null && document.total_amount != null) {
     const expected = document.balance_amount != null ? Number(document.total_amount) - Number(document.balance_amount) : Number(document.total_amount);
