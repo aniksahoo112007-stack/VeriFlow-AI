@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "cross-env NODE_OPTIONS=--dns-result-order=ipv4first nodemon server.js",
-  "start": "cross-env NODE_OPTIONS=--dns-result-order=ipv4first node server.js",
+  "start": "node server.js",
   "test": "node --test"
   },
   "dependencies": {
