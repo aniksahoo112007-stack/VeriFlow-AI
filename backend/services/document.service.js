@@ -23,14 +23,34 @@ import {
 const fieldMap = {
   documentType: "document_type",
   vendorName: "vendor_name",
+  vendorAddress: "vendor_address",
+  vendorPhone: "vendor_phone",
+  vendorEmail: "vendor_email",
   documentNumber: "document_number",
+  invoiceNumber: "invoice_number",
+  receiptNumber: "receipt_number",
+  utrNumber: "utr_number",
+  transactionId: "transaction_id",
+  referenceNumber: "reference_number",
   documentDate: "document_date",
+  transactionDate: "transaction_date",
   currency: "currency",
   subtotal: "subtotal",
   taxAmount: "tax_amount",
+  gstAmount: "gst_amount",
+  cgst: "cgst",
+  sgst: "sgst",
+  igst: "igst",
+  discount: "discount",
   totalAmount: "total_amount",
+  paidAmount: "paid_amount",
+  balanceAmount: "balance_amount",
   purchaseOrderNumber: "purchase_order_number",
   gstin: "gstin",
+  pan: "pan",
+  bankName: "bank_name",
+  accountLast4: "account_last4",
+  paymentMethod: "payment_method",
   dueDate: "due_date",
   lineItems: "line_items",
   summary: "summary",
@@ -387,14 +407,14 @@ export async function processDocument(id, user) {
     });
 
     stage = "gemini_request";
-    const { extraction, modelUsed } = await extractDocument(
+    const { extraction, anomalies, modelUsed, anomalyModelUsed } = await extractDocument(
       buffer,
       document.mime_type,
       { documentId: id },
     );
     const update = {
       ai_model: modelUsed,
-      raw_extraction: extraction,
+      raw_extraction: { ...extraction, anomalies },
       processed_at: new Date().toISOString(),
       processing_status: "completed",
       status: "under_review",
@@ -435,6 +455,7 @@ export async function processDocument(id, user) {
       action: "AI_PROCESSING_COMPLETED",
       metadata: {
         model: modelUsed,
+        anomalyModel: anomalyModelUsed,
         confidence: extraction.confidence,
         riskScore: validation.risk.score,
       },

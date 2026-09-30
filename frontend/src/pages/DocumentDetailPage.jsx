@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   Check,
-  CheckCircle2,
   ExternalLink,
   FileText,
   LoaderCircle,
@@ -23,16 +22,38 @@ import { date, money, title } from "../utils/format";
 const editable = [
   ["documentType", "Document type", "select"],
   ["vendorName", "Vendor", "text"],
+  ["vendorAddress", "Vendor address", "text"],
+  ["vendorPhone", "Vendor phone", "text"],
+  ["vendorEmail", "Vendor email", "text"],
   ["documentNumber", "Document number", "text"],
+  ["invoiceNumber", "Invoice number", "text"],
+  ["receiptNumber", "Receipt number", "text"],
+  ["purchaseOrderNumber", "PO number", "text"],
+  ["utrNumber", "UTR number", "text"],
+  ["transactionId", "Transaction ID", "text"],
+  ["referenceNumber", "Reference number", "text"],
   ["documentDate", "Document date", "date"],
+  ["transactionDate", "Transaction date", "date"],
+  ["dueDate", "Due date", "date"],
   ["currency", "Currency", "text"],
   ["subtotal", "Subtotal", "number"],
   ["taxAmount", "Tax", "number"],
+  ["gstAmount", "GST", "number"],
+  ["cgst", "CGST", "number"],
+  ["sgst", "SGST", "number"],
+  ["igst", "IGST", "number"],
+  ["discount", "Discount", "number"],
   ["totalAmount", "Total", "number"],
-  ["purchaseOrderNumber", "PO number", "text"],
+  ["paidAmount", "Paid amount", "number"],
+  ["balanceAmount", "Balance amount", "number"],
   ["gstin", "GSTIN", "text"],
-  ["dueDate", "Due date", "date"],
+  ["pan", "PAN", "text"],
+  ["bankName", "Bank", "text"],
+  ["accountLast4", "Account last 4", "text"],
+  ["paymentMethod", "Payment method", "text"],
 ];
+const moneyFields = new Set(["subtotal", "taxAmount", "gstAmount", "cgst", "sgst", "igst", "discount", "totalAmount", "paidAmount", "balanceAmount"]);
+const dateFields = new Set(["documentDate", "transactionDate", "dueDate"]);
 export default function DocumentDetailPage() {
   const { id } = useParams();
   const { push } = useToast();
@@ -60,14 +81,7 @@ export default function DocumentDetailPage() {
   const save = async () => {
     setBusy("save");
     try {
-      const payload = {
-        ...form,
-        subtotal: form.subtotal === "" ? null : Number(form.subtotal),
-        taxAmount: form.taxAmount === "" ? null : Number(form.taxAmount),
-        totalAmount: form.totalAmount === "" ? null : Number(form.totalAmount),
-        documentDate: form.documentDate || null,
-        dueDate: form.dueDate || null,
-      };
+      const payload = Object.fromEntries(Object.entries(form).map(([key, value]) => [key, moneyFields.has(key) ? (value === "" ? null : Number(value)) : dateFields.has(key) ? value || null : value || null]));
       await api.patch(`/documents/${id}/extracted-fields`, payload);
       push("Extracted fields updated and revalidated.");
       setEdit(false);
@@ -227,7 +241,8 @@ export default function DocumentDetailPage() {
                   <p className="font-display text-xl font-extrabold text-emerald-700">
                     {Math.round(d.aiConfidence * 100)}%
                   </p>
-                  <p className="text-[10px] text-slate-400">confidence</p>
+                  <p className="text-[10px] font-semibold text-slate-500">Extraction Confidence</p>
+                  <p className="text-[10px] text-slate-400">visible-field readability</p>
                 </div>
               )}
             </div>
@@ -252,6 +267,12 @@ export default function DocumentDetailPage() {
                   AI summary
                 </p>
                 <p className="mt-2 text-sm leading-6">{d.summary}</p>
+              </div>
+            )}
+            {(["visibleLogos", "visibleStamps", "visibleSignatures"]).some((key) => d.rawExtraction?.[key]?.length) && (
+              <div className="mt-5 rounded-xl border p-4 text-sm">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Visible document elements</p>
+                {["visibleLogos", "visibleStamps", "visibleSignatures"].map((key) => d.rawExtraction?.[key]?.length ? <p className="mt-2" key={key}><span className="font-semibold">{title(key)}:</span> {d.rawExtraction[key].join(", ")}</p> : null)}
               </div>
             )}
             {edit && (
@@ -371,6 +392,7 @@ function Field({
               "invoice",
               "purchase_order",
               "receipt",
+              "payment",
               "expense_bill",
               "form",
               "contract",
@@ -392,9 +414,9 @@ function Field({
         )}
       </label>
     );
-  const formatted = ["subtotal", "taxAmount", "totalAmount"].includes(name)
+  const formatted = moneyFields.has(name)
     ? money(display, currency)
-    : ["documentDate", "dueDate"].includes(name)
+    : dateFields.has(name)
       ? date(display)
       : name === "documentType"
         ? title(display || "—")
@@ -449,23 +471,22 @@ function ValidationPanel({ items = [], score, level }) {
     <section className="card p-5">
       <div className="flex items-start justify-between">
         <div>
-          <p className="eyebrow">Document risk assessment</p>
+          <p className="eyebrow">Document risk</p>
           <h2 className="mt-1 font-display text-xl font-bold">
-            {score ?? 0}/100 · {title(level || "Not assessed")}
+            Document Risk: {title(level || "Not assessed")} ({score ?? 0}/100)
           </h2>
         </div>
         <StatusBadge value={level} />
       </div>
-      <div className="mt-5 space-y-3">
-        {items.length ? (
-          items.map((x) => (
+      <p className="mt-5 text-xs font-bold uppercase tracking-wide text-slate-400">Risk Factors</p>
+      <div className="mt-3 space-y-3">
+        {failed.length ? (
+          failed.map((x) => (
             <div
               key={x.id || x.code}
-              className={`flex gap-3 rounded-xl p-3 ${x.passed ? "bg-emerald-50" : "bg-amber-50"}`}
+              className="flex gap-3 rounded-xl bg-amber-50 p-3"
             >
-              {x.passed ? (
-                <CheckCircle2 className="shrink-0 text-emerald-600" size={19} />
-              ) : x.severity === "critical" ? (
+              {x.severity === "critical" ? (
                 <XCircle className="shrink-0 text-red-600" size={19} />
               ) : (
                 <AlertTriangle className="shrink-0 text-amber-600" size={19} />
@@ -485,7 +506,7 @@ function ValidationPanel({ items = [], score, level }) {
           ))
         ) : (
           <p className="text-sm text-slate-400">
-            Validation will appear after successful processing.
+            {items.length ? "No suspicious evidence was found." : "Validation will appear after successful processing."}
           </p>
         )}
       </div>

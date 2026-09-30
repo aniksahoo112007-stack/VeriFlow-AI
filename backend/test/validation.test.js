@@ -43,3 +43,20 @@ test("basic deterministic validation catches missing total", async () => {
   assert.ok(results.some((item) => item.code === "MISSING_TOTAL"));
   assert.equal(assessRisk(results).level, "medium");
 });
+
+test("new identifier and anomaly evidence uses weighted risk", () => {
+  const risk = assessRisk([
+    { code: "DUPLICATE_UTR", passed: false },
+    { code: "INVALID_GSTIN", passed: false },
+    { code: "AI_ANOMALY_WARNING", passed: false },
+  ]);
+  assert.deepEqual(risk, { score: 65, level: "high" });
+});
+
+test("documents without suspicious evidence remain low risk", () => {
+  assert.deepEqual(assessRisk([]), { score: 0, level: "low" });
+  assert.deepEqual(
+    assessRisk([{ code: "TOTAL_MATCH", passed: true }]),
+    { score: 0, level: "low" },
+  );
+});

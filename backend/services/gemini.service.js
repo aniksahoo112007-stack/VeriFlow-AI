@@ -1,7 +1,10 @@
 import { GoogleGenAI } from "@google/genai";
 import { env, hasGeminiConfig } from "../config/env.js";
 import { ApiError } from "../utils/api-error.js";
-import { extractionSchema } from "../validators/document.validators.js";
+import {
+  anomalyAnalysisSchema,
+  extractionSchema,
+} from "../validators/document.validators.js";
 import {
   logProcessingError,
   logProcessingStage,
@@ -25,6 +28,7 @@ const responseSchema = {
         "invoice",
         "purchase_order",
         "receipt",
+        "payment",
         "expense_bill",
         "form",
         "contract",
@@ -32,15 +36,35 @@ const responseSchema = {
       ],
     },
     vendorName: { type: ["string", "null"] },
+    vendorAddress: { type: ["string", "null"] },
+    vendorPhone: { type: ["string", "null"] },
+    vendorEmail: { type: ["string", "null"] },
     documentNumber: { type: ["string", "null"] },
+    invoiceNumber: { type: ["string", "null"] },
+    receiptNumber: { type: ["string", "null"] },
+    purchaseOrderNumber: { type: ["string", "null"] },
+    utrNumber: { type: ["string", "null"] },
+    transactionId: { type: ["string", "null"] },
+    referenceNumber: { type: ["string", "null"] },
     documentDate: { type: ["string", "null"] },
+    transactionDate: { type: ["string", "null"] },
+    dueDate: { type: ["string", "null"] },
     currency: { type: ["string", "null"] },
     subtotal: { type: ["number", "null"] },
     taxAmount: { type: ["number", "null"] },
+    gstAmount: { type: ["number", "null"] },
+    cgst: { type: ["number", "null"] },
+    sgst: { type: ["number", "null"] },
+    igst: { type: ["number", "null"] },
+    discount: { type: ["number", "null"] },
     totalAmount: { type: ["number", "null"] },
-    purchaseOrderNumber: { type: ["string", "null"] },
+    paidAmount: { type: ["number", "null"] },
+    balanceAmount: { type: ["number", "null"] },
     gstin: { type: ["string", "null"] },
-    dueDate: { type: ["string", "null"] },
+    pan: { type: ["string", "null"] },
+    bankName: { type: ["string", "null"] },
+    accountLast4: { type: ["string", "null"] },
+    paymentMethod: { type: ["string", "null"] },
     lineItems: {
       type: "array",
       items: {
@@ -55,9 +79,32 @@ const responseSchema = {
       },
     },
     summary: { type: ["string", "null"] },
+    visibleLogos: { type: ["array", "null"], items: { type: "string" } },
+    visibleStamps: { type: ["array", "null"], items: { type: "string" } },
+    visibleSignatures: { type: ["array", "null"], items: { type: "string" } },
     confidence: { type: "number", minimum: 0, maximum: 1 },
     missingFields: { type: "array", items: { type: "string" } },
     warnings: { type: "array", items: { type: "string" } },
+  },
+};
+
+const anomalyResponseSchema = {
+  type: "object",
+  required: ["anomalies"],
+  properties: {
+    anomalies: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["type", "severity", "reason", "evidence"],
+        properties: {
+          type: { type: "string" },
+          severity: { type: "string", enum: ["info", "warning", "critical"] },
+          reason: { type: "string" },
+          evidence: { type: "string" },
+        },
+      },
+    },
   },
 };
 
@@ -176,6 +223,7 @@ export async function requestModelWithRetry({
   contents,
   context,
   maxAttempts,
+  responseJsonSchema = responseSchema,
   sleepFn = sleep,
   randomFn = Math.random,
 }) {
@@ -193,7 +241,7 @@ export async function requestModelWithRetry({
         contents,
         config: {
           responseMimeType: "application/json",
-          responseJsonSchema: responseSchema,
+          responseJsonSchema,
         },
       });
       logProcessingStage("gemini_request", "attempt_succeeded", {
@@ -257,7 +305,7 @@ export async function extractDocument(buffer, mimeType, context = {}) {
       role: "user",
       parts: [
         {
-          text: "Classify this business document and extract only facts visibly supported by it. DO NOT INVENT VALUES. If a field cannot be confidently found, return null. Use other when classification evidence is weak. Dates must be YYYY-MM-DD. Confidence is overall extraction confidence from 0 to 1.",
+          text: `Classify this business document and extract only facts visibly supported by it. DO NOT INVENT VALUES. If a value is not clearly visible, return null. Dates must be YYYY-MM-DD. Search carefully for payment identifiers labelled UTR, UTR No, UTR Number, Transaction ID, Transaction Ref, Reference No, Payment Reference, Bank Reference, Txn ID, or RRN. Normalize a UTR into utrNumber, an explicit transaction/Txn ID into transactionId, and other payment/bank/reference values into referenceNumber. Keep distinct identifiers separate. confidence means extraction confidence only: how certain you are that visible fields were read correctly. It is never an authenticity, fraud, or genuineness score. Record only visibly present logos, stamps, and signatures. Use other when document classification evidence is weak.`,
         },
         { inlineData: { mimeType, data: buffer.toString("base64") } },
       ],
@@ -370,8 +418,9 @@ export async function extractDocument(buffer, mimeType, context = {}) {
   }
 
   logProcessingStage("zod_validation", "started", responseContext);
+  let extraction;
   try {
-    const extraction = extractionSchema.parse(parsed);
+    extraction = extractionSchema.parse(parsed);
     logProcessingStage("zod_validation", "completed", {
       ...responseContext,
       documentType: extraction.documentType,
@@ -380,7 +429,6 @@ export async function extractDocument(buffer, mimeType, context = {}) {
       missingFieldCount: extraction.missingFields.length,
       warningCount: extraction.warnings.length,
     });
-    return { extraction, modelUsed };
   } catch (error) {
     const staged = markProcessingStage(error, "zod_validation");
     logProcessingError("zod_validation", staged, responseContext);
@@ -391,6 +439,95 @@ export async function extractDocument(buffer, mimeType, context = {}) {
       safeErrorDetails(staged),
     );
     wrapped.stage = "zod_validation";
+    wrapped.cause = staged;
+    throw wrapped;
+  }
+
+  const anomalyContents = [
+    {
+      role: "user",
+      parts: [
+        {
+          text: `Review this same document for evidence-based visual or semantic anomalies only. Consider inconsistent fonts or alignment, visibly edited totals, pasted-looking logos, inconsistent dates, conflicting values, missing expected sections, and mismatched transaction/payment fields. Return only the requested anomalies JSON. Every anomaly must identify concrete visible evidence. Do not claim fraud, forgery, authenticity, or intent as fact. Do not infer an anomaly merely because extraction confidence is low. Extracted context: ${JSON.stringify({
+            documentType: extraction.documentType,
+            vendorName: extraction.vendorName,
+            documentNumber: extraction.documentNumber,
+            invoiceNumber: extraction.invoiceNumber,
+            purchaseOrderNumber: extraction.purchaseOrderNumber,
+            utrNumber: extraction.utrNumber,
+            transactionId: extraction.transactionId,
+            referenceNumber: extraction.referenceNumber,
+            documentDate: extraction.documentDate,
+            transactionDate: extraction.transactionDate,
+            currency: extraction.currency,
+            subtotal: extraction.subtotal,
+            taxAmount: extraction.taxAmount,
+            totalAmount: extraction.totalAmount,
+            paidAmount: extraction.paidAmount,
+          })}`,
+        },
+        { inlineData: { mimeType, data: buffer.toString("base64") } },
+      ],
+    },
+  ];
+  let anomalyResponse;
+  let anomalyModelUsed = modelUsed;
+  try {
+    anomalyResponse = await requestModelWithRetry({
+      ai,
+      model: modelUsed,
+      contents: anomalyContents,
+      context: { ...safeContext, analysis: "anomaly" },
+      maxAttempts: modelUsed === env.geminiModel ? 3 : 2,
+      responseJsonSchema: anomalyResponseSchema,
+    });
+  } catch (error) {
+    if (
+      modelUsed === env.geminiModel &&
+      error.transient &&
+      error.allCapacity &&
+      env.geminiFallbackModel
+    ) {
+      anomalyModelUsed = env.geminiFallbackModel;
+      anomalyResponse = await requestModelWithRetry({
+        ai,
+        model: anomalyModelUsed,
+        contents: anomalyContents,
+        context: { ...safeContext, analysis: "anomaly" },
+        maxAttempts: 2,
+        responseJsonSchema: anomalyResponseSchema,
+      });
+    } else {
+      throw error;
+    }
+  }
+
+  try {
+    logProcessingStage("anomaly_response_parsing", "started", {
+      ...safeContext,
+      selectedModel: anomalyModelUsed,
+    });
+    const text = anomalyResponse.text?.trim();
+    if (!text) throw new Error("Gemini returned an empty anomaly response");
+    const anomalies = anomalyAnalysisSchema.parse(
+      JSON.parse(text.replace(/^```json\s*/i, "").replace(/```$/i, "").trim()),
+    ).anomalies;
+    logProcessingStage("anomaly_response_parsing", "completed", {
+      ...safeContext,
+      selectedModel: anomalyModelUsed,
+      anomalyCount: anomalies.length,
+    });
+    return { extraction, anomalies, modelUsed, anomalyModelUsed };
+  } catch (error) {
+    const staged = markProcessingStage(error, "anomaly_response_parsing");
+    logProcessingError(staged.stage, staged, safeContext);
+    const wrapped = new ApiError(
+      502,
+      `AI anomaly analysis failed for model ${anomalyModelUsed}.`,
+      "AI_RESPONSE_VALIDATION_FAILED",
+      safeErrorDetails(staged),
+    );
+    wrapped.stage = staged.stage;
     wrapped.cause = staged;
     throw wrapped;
   }
